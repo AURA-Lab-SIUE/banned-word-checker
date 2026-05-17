@@ -1,133 +1,254 @@
-import streamlit as st
-import pandas as pd
-import docx
-import pdfplumber
-import re
+"""Streamlit frontend for the AURA Lab Banned Word Checker.
+
+Implements the leaked NSF 3-stage decision tree faithfully:
+  Stage 1: Title or Abstract -> Category 3 on hit, EARLY-EXIT
+  Stage 2: Project Summary   -> Category 3 on hit, EARLY-EXIT
+  Stage 3: Project Description -> Category 3 on hit, EARLY-EXIT
+  All clean -> Category 1 (requires reviewer comment)
+
+Uses core.py for engine + data/banned-words.json for word list, so this app
+and the static web port stay in sync.
+"""
+from __future__ import annotations
+
+import os
 from io import BytesIO
 
-# --- NEW: EXPANDED CUSTOM CSS ---
-# This block now includes color overrides for links and a custom info box style.
+import streamlit as st
+
+import core
+
+# ---------- Page config + styling ----------
+
+st.set_page_config(
+    page_title='AURA Lab Word Checker',
+    page_icon=':lock:',
+    layout='wide',
+)
+
 st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;700&family=Public+Sans:wght@400;700&display=swap');
-
-    /* --- Font Definitions --- */
-    h1, h2, h3, h4, h5, h6 {
-        font-family: 'Lexend', sans-serif;
-    }
-    body, p, li, label, .stMarkdown {
-        font-family: 'Public Sans', sans-serif;
-    }
-    
-    /* --- Color & Style Overrides --- */
-
-    /* Style links to use the accent color from your theme */
-    a, a:visited {
-        color: #ea4335 !important;
-    }
-
-    /* Create a custom info box that uses your theme's colors */
-    .custom-info-box {
-        background-color: #f2f2f2; /* --10-grey-color */
-        border-left: 5px solid #ea4335; /* --accent-one */
-        padding: 1rem;
-        border-radius: 0.25rem;
-        margin-bottom: 1rem;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-
-# --- BANNED WORDS SET ---
-# This list remains unchanged
-BANNED_WORDS = {'activism', 'activist', 'activists', 'advance diversity', 'advance inclusivity', 'advance the diversity', 'advancing diversity', 'advancing inclusive', 'advocacy', 'advocate', 'advocates', 'affirmative action', 'alliance for diversity', 'ally', 'allyship', 'antiracist', 'background inclusivity', 'barrier', 'barriers', 'bias toward', 'bias towards', 'biased', 'biased toward', 'biased towards', 'biases', 'biases toward', 'biases towards', 'bicultural', 'bipoc', 'bl cultural', 'black and latinx', 'black cultural', 'black culture', 'black cultures', 'broaden diversity', 'broaden the diversity', 'clean energy', 'climate action', 'climate change', 'climate conscious', 'climate consciousness', 'climate equality', 'climate equity', 'climate injustice', 'climate injustices', 'climate justice', 'climate justices', 'climate research', 'commitment to diversity', 'community diversity', 'community equity', 'community inclusivity', 'cultural activism', 'cultural activist', 'cultural activists', 'cultural advocacy', 'cultural advocate', 'cultural and ethnic', 'cultural and racial', 'cultural appropriation', 'cultural appropriations', 'cultural bias', 'cultural competency', 'cultural connections', 'cultural differences', 'cultural heritage', 'cultural humility', 'cultural inequalities', 'cultural inequality', 'cultural inequities', 'cultural inequity', 'cultural injustice', 'cultural injustices', 'cultural justice', 'cultural relevance', 'cultural segregation', 'culturally attuned', 'culturally biased', 'culturally responsive', 'culturally sensitive', 'culturally sustainable', 'culturally sustaining', 'culture and ethnicity', 'culture and race', 'cultures and ethnicities', 'cultures and races', 'de colonization', 'de colonize', 'de colonized', 'de colonizing', 'de segregate', 'de segregated', 'de segregates', 'de segregation', 'decolonization', 'decolonize', 'decolonized', 'decolonizing', 'dei', 'deij', 'desegregate', 'desegregated', 'desegregates', 'desegregation', 'disabilities', 'disability', 'discriminate', 'discriminated', 'discrimination', 'discriminatory', 'diverse background', 'diverse backgrounds', 'diverse communities', 'diverse community', 'diverse group', 'diverse groups', 'diverse individual', 'diverse individuals', 'diverse status', 'diverse statuses', 'diverse voices', 'diversified', 'diversify', 'diversifying', 'diversity and equity', 'diversity and inclusion', 'diversity and inclusivity', 'diversity awareness', 'diversity equity', 'divisiveness', 'eco cultural', 'ecocultural', 'ehance the diversity', 'ehancing diversity', 'emphasis on diversity', 'emphasize diversity', 'emphasizing diversity', 'encourage diversity', 'encouraging diversity', 'enhance diversity', 'enhance the diversity', 'enhancing diversity', 'environment conscious', 'environment consciousness', 'environmental conscious', 'environmental consciousness', 'environmental equality', 'environmental equity', 'environmental governance', 'environmental justice', 'environmental social', 'environmentally conscious', 'environmentalsocial', 'equal opportunities', 'equal Opportunity', 'equalities', 'equality', 'equitable', 'equitable and inclusive', 'equities', 'equity', 'esg', 'esg effort', 'esg efforts', 'esg initiative', 'esg initiatives', 'ethnic and cultural', 'ethnic cultural', 'ethnic culture', 'ethnic cultures', 'ethnic diversity', 'ethnic equity', 'ethnicities and cultures', 'ethnicity', 'ethnicity and culture', 'excluded', 'exclusion', 'exclusive', 'feel seen and heard', 'female', 'females', 'foster diversity', 'fostering diversity', 'fostering inclusive', 'fostering inclusivity', 'fostering the diversity', 'gender', 'gender diversity', 'genders', 'green infrastructure', 'green new deal', 'green society', 'group equity', 'group inclusivity', 'hate speech', 'hispanic cultural', 'hispanic culture', 'hispanic cultures', 'hispanic minority', 'hispanic people', 'hispanic person', 'hispanic voices', 'historical racism', 'historically', 'historically racist', 'historically white', 'implicit bias', 'implicit biased', 'implicit biases', 'inclusion', 'inclusive', 'inclusiveness', 'inclusivity', 'increase diversity', 'increase the diversity', 'indigenous communities', 'indigenous community', 'indigenous individual', 'indigenous individuals', 'indigenous minorities', 'indigenous minority', 'indigenous people', 'indigenous person', 'indigenous voices', 'inequalities', 'inequality', 'inequitable', 'inequities', 'injustice', 'injustices', 'institutional', 'institutional racism', 'institutional/zed racism', 'institutionalize', 'institutionalized', 'institutionally', 'institutionally racist', 'inter racial', 'inter racially', 'intergenerational trauma', 'interracial', 'interracially', 'intersectional', 'intersectionality', 'latina communities', 'latina community', 'latina individual', 'latina individuals', 'latina minorities', 'latina minority', 'latina people', 'latina person', 'latina voices', 'latinx communities', 'latinx community', 'latinx individual', 'latinx individuals', 'latinx minorities', 'latinx minority', 'latinx people', 'latinx person', 'latinx voices', 'lgbt', 'marginalization', 'marginalize', 'marginalized', 'micro aggression', 'micro aggressions', 'micro aggressive', 'micro aggressiveness', 'microaggression', 'microaggressions', 'microaggressive', 'microaggressiveness', 'minorities', 'minority', 'multi ethnic', 'multi ethnically', 'multicultural', 'multiethnic', 'multiethnically', 'net zero', 'netzero', 'non black', 'non white', 'nonblack', 'nonwhite', 'oppressed', 'oppression', 'oppressive', 'oppressiveness', 'people of color', 'poc', 'pocx', 'polarization', 'polarize', 'political', 'politicization', 'politicize', 'predominately white', 'prejudice', 'prejudices', 'primarily white', 'priviledges', 'privilege', 'privileged', 'privileged white', 'privileges', 'pro black', 'pro white', 'prob lack', 'promoting diversity', 'race and culture', 'race and ethnicity', 'race based', 'racebased', 'races and cultures', 'races and ethnicities', 'racial', 'racial and cultural', 'racial and ethnic', 'racial bias', 'racial biases', 'racial disparities', 'racial disparity', 'racial diversity', 'racial identity', 'racial inequalities', 'racial inequality', 'racial inequities', 'racial inequity', 'racial injustice', 'racial injustices', 'racial justice', 'racial minorities', 'racial minority', 'racial oppression', 'racial prejudice', 'racial prejudices', 'racial segregation', 'racial socialization', 'racial solidarity', 'racial stereotypes', 'racial violence', 'racially', 'racially and culturally', 'racially bias', 'racially biased', 'racially oppressed', 'racism', 'racist', 'reparation', 'reparations', 'safe space', 'safe spaces', 'segregated', 'segregated ethnicities', 'segregated ethnicity', 'segregated race', 'segregated races', 'segregation', 'sense of belonging', 'sense of belongingness', 'sexual preferences', 'social environmental', 'social justice', 'socialenvironmental', 'socio cultural', 'socio economic', 'sociocultural', 'socioeconomic', 'status', 'statuses', 'stereotype', 'stereotypes', 'stereotypical', 'stereotyping', 'structural racism', 'structurally racist', 'system of oppression', 'systematic oppression', 'systematically oppressed', 'systemic', 'systemic oppression', 'systemic racism', 'systemical', 'systemically', 'systemically oppressed', 'systemically racist', 'systems of oppression', 'systems of power', 'tokenistic', 'tokensim', 'trans ethnic', 'transethnic', 'trauma', 'traumatic', 'under appreciated', 'under appreciation', 'under privilege', 'under privileged', 'under representation', 'under represented', 'under served', 'under serving', 'under valued', 'under valuing', 'underappreciated', 'underappreciation', 'underprivilege', 'underprivileged', 'underrepresentation', 'underrepresented', 'underserved', 'underserving', 'undervalued', 'undervaluing', 'unequal opportunities', 'unequal opportunity', 'unjust', 'victim', 'victimhood', 'victimized', 'victims', 'voices are acknowledged', 'voices heard', 'voices matter', 'welcoming environment', 'white colonialism', 'white colonization', 'white colonizer', 'white colonizers', 'white fragility', 'white historically', 'white nationalism', 'white nationalist', 'white people', 'white person', 'white privilege', 'white serving', 'white supremacy', 'whiteness', 'women', 'women and underrepresented'}
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Lexend:wght@400;700&family=Public+Sans:wght@400;700&display=swap');
+h1, h2, h3, h4, h5, h6 { font-family: 'Lexend', sans-serif; }
+body, p, li, label, .stMarkdown { font-family: 'Public Sans', sans-serif; }
+a, a:visited { color: #ea4335 !important; }
+.cat-3 {
+    background: #fdecea; border-left: 6px solid #c0392b;
+    padding: 1rem; border-radius: 0.25rem; margin: 0.5rem 0;
+}
+.cat-1 {
+    background: #e8f5e9; border-left: 6px solid #2e7d32;
+    padding: 1rem; border-radius: 0.25rem; margin: 0.5rem 0;
+}
+.stage-card {
+    background: #f7f7f7; border: 1px solid #ddd;
+    padding: 0.75rem; border-radius: 0.25rem; margin: 0.25rem 0;
+}
+.stage-skipped { opacity: 0.55; }
+.hit-pill {
+    display: inline-block; background: #fff; border: 1px solid #c0392b;
+    color: #c0392b; padding: 2px 8px; border-radius: 999px;
+    margin: 2px; font-size: 0.85rem;
+}
+.source-tag {
+    font-size: 0.7rem; opacity: 0.7; margin-left: 4px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 
-# --- TEXT EXTRACTION FUNCTIONS ---
-def extract_text_from_docx(file_like_object):
+# ---------- File parsing helpers ----------
+
+def extract_text_from_docx(file_like) -> str:
     try:
-        doc = docx.Document(file_like_object)
-        return "\n".join([para.text for para in doc.paragraphs])
+        import docx
+        doc = docx.Document(file_like)
+        return '\n'.join(p.text for p in doc.paragraphs)
     except Exception as e:
-        st.error(f"Error reading .docx file: {e}")
-        return ""
+        st.error(f'Error reading .docx: {e}')
+        return ''
 
-def extract_text_from_pdf(file_like_object):
-    text = ""
+
+def extract_text_from_pdf(file_like) -> str:
     try:
-        with pdfplumber.open(file_like_object) as pdf:
+        import pdfplumber
+        text = ''
+        with pdfplumber.open(file_like) as pdf:
             for page in pdf.pages:
-                page_text = page.extract_text()
-                if page_text:
-                    text += page_text + "\n"
+                t = page.extract_text()
+                if t:
+                    text += t + '\n'
         return text
     except Exception as e:
-        st.error(f"Error reading .pdf file: {e}")
-        return ""
+        st.error(f'Error reading .pdf: {e}')
+        return ''
 
-# --- STREAMLIT APP UI ---
-st.set_page_config(
-    page_title="SIM Lab Word Checker",
-    page_icon="🔬",
-    layout="wide"
-)
 
-# --- SIDEBAR FOR BRANDING ---
+# ---------- Sidebar ----------
+
 with st.sidebar:
-    st.image("assets/simlab-atsiue.png")
-    st.image("assets/siue-red-logo.png")
-    st.markdown("---")
+    logo_path = os.path.join('assets', 'aura-lab-logo.png')
+    if os.path.exists(logo_path):
+        st.image(logo_path)
+    else:
+        st.markdown('### AURA Lab')
+    siue_logo = os.path.join('assets', 'siue-red-logo.png')
+    if os.path.exists(siue_logo):
+        st.image(siue_logo)
+    st.markdown('---')
     st.markdown(
-        "This tool is provided by the **SIM Lab** at "
-        "**Southern Illinois University Edwardsville**."
+        'This tool is provided by the **AURA Lab** (Avatars, Users, '
+        'Relationships, and Affect) at **Southern Illinois University '
+        'Edwardsville**.'
     )
-    st.markdown("[Visit the SIM Lab Website](https://www.siue.edu/education/secondary-education/simlab/)")
-    st.markdown("[Visit SIUE's Website](https://www.siue.edu)")
-    st.markdown("---")
+    st.markdown('[AURA Lab Website](https://aura-lab-siue.github.io)')
+    st.markdown('[SIUE](https://www.siue.edu)')
+    st.markdown('---')
+
+    st.markdown('### Output Mode')
+    mode = st.radio(
+        'Format the result as:',
+        options=['plain', 'reviewer'],
+        format_func=lambda m: 'Plain (FLAGGED / CLEAN)' if m == 'plain' else 'Reviewer (Category 1 / 3)',
+        index=0,
+        help='Plain Mode is friendlier for grant writers. Reviewer Mode mirrors the leaked decision-tree language.',
+    )
+
+    st.markdown('---')
+    st.markdown('### Word List')
+    terms = core.load_wordlist()
+    st.metric('Terms checked', len(terms))
+    leaked_n = sum(1 for t in terms if t['source'] in ('leaked', 'both'))
+    st.caption(f'{leaked_n} appear in the leaked NSF source list.')
 
 
-# --- Main page content ---
-st.title("Banned Words Checker for Federal Grants")
+# ---------- Main UI ----------
 
-# --- REPLACED st.info() WITH CUSTOM st.markdown() ---
-st.markdown('<div class="custom-info-box">Upload a .docx or .pdf document to check for the presence and frequency of specific words and phrases.</div>', unsafe_allow_html=True)
+st.title('Banned Word Checker for Federal Grants')
 
-uploaded_file = st.file_uploader(
-    "Drag and drop your file here or click to upload",
-    type=['docx', 'pdf'],
-    accept_multiple_files=False
+st.markdown(
+    'Implements the 3-stage decision tree from the leaked NSF review process. '
+    'Provide your grant text in the three sections below, or upload a document '
+    'and let the tool attempt to split it.'
 )
 
-if uploaded_file is not None:
-    file_bytes = BytesIO(uploaded_file.getvalue())
-    
-    if uploaded_file.name.endswith('.pdf'):
-        raw_text = extract_text_from_pdf(file_bytes)
-    elif uploaded_file.name.endswith('.docx'):
-        raw_text = extract_text_from_docx(file_bytes)
-    else:
-        raw_text = ""
-        st.error("Unsupported file format.")
+with st.expander('How the decision tree works'):
+    st.markdown("""
+1. **Stage 1 — Title or Abstract** is checked first. Any flagged term here results in **Category 3**, and later stages are NOT scanned.
+2. **Stage 2 — Project Summary** is checked only if Stage 1 was clean. A hit here also results in Category 3 with early exit.
+3. **Stage 3 — Project Description** is checked only if Stages 1 and 2 were clean. A hit here results in Category 3.
+4. **All stages clean** results in **Category 1** — in the leaked process, this requires a reviewer comment explaining why no DEIA/EO language was flagged.
 
-    if raw_text:
-        st.subheader("Analysis Results")
-        
-        normalized_text = raw_text.lower()
-        
-        found_words = {}
-        for phrase in BANNED_WORDS:
-            try:
-                pattern = r'\b' + re.escape(phrase) + r'\b'
-                matches = re.findall(pattern, normalized_text)
-                if matches:
-                    found_words[phrase] = len(matches)
-            except re.error as e:
-                st.warning(f"Could not process phrase '{phrase}': {e}")
-                continue
+This early-exit behavior mirrors the leaked diagram exactly. It means a doc flagged in the title generates a shorter report than one flagged in the description.
+""")
 
-        if found_words:
-            df = pd.DataFrame(list(found_words.items()), columns=['Banned Phrase', 'Frequency'])
-            df = df.sort_values(by='Frequency', ascending=False).reset_index(drop=True)
-            st.dataframe(df, use_container_width=True)
+
+tab_inputs, tab_upload = st.tabs(['Paste Sections', 'Upload File'])
+
+with tab_inputs:
+    col1, col2 = st.columns(2)
+    with col1:
+        title_text = st.text_area('Title', height=80, key='title_paste')
+        abstract_text = st.text_area('Abstract', height=180, key='abstract_paste')
+    with col2:
+        summary_text = st.text_area('Project Summary', height=180, key='summary_paste')
+        description_text = st.text_area('Project Description', height=180, key='description_paste')
+
+with tab_upload:
+    uploaded = st.file_uploader(
+        'Upload a .docx or .pdf (the tool will attempt to split it by NSF section headers)',
+        type=['docx', 'pdf'],
+        accept_multiple_files=False,
+    )
+
+    if uploaded is not None:
+        buf = BytesIO(uploaded.getvalue())
+        if uploaded.name.lower().endswith('.pdf'):
+            raw = extract_text_from_pdf(buf)
         else:
-            st.success("🎉 **Great news!** No banned words were found in your document.")
+            raw = extract_text_from_docx(buf)
+
+        if raw:
+            sections = core.split_sections(raw)
+            st.success(
+                'Auto-detected sections below. Edit any text before running the check.'
+            )
+            col1, col2 = st.columns(2)
+            with col1:
+                title_text = st.text_area('Title', value=sections['title'], height=80, key='title_upload')
+                abstract_text = st.text_area('Abstract', value=sections['abstract'], height=180, key='abstract_upload')
+            with col2:
+                summary_text = st.text_area('Project Summary', value=sections['project_summary'], height=180, key='summary_upload')
+                description_text = st.text_area('Project Description', value=sections['project_description'], height=180, key='description_upload')
+        else:
+            st.error('Could not extract text from the uploaded file.')
+
+
+# Pull the active tab's values. Streamlit re-runs on every interaction so both
+# tabs' widgets exist; we use whichever has content.
+def _pick(key_paste, key_upload):
+    return st.session_state.get(key_upload) or st.session_state.get(key_paste) or ''
+
+
+title = _pick('title_paste', 'title_upload')
+abstract = _pick('abstract_paste', 'abstract_upload')
+summary = _pick('summary_paste', 'summary_upload')
+description = _pick('description_paste', 'description_upload')
+
+run_check = st.button('Run Check', type='primary', use_container_width=True)
+
+if run_check:
+    if not any([title.strip(), abstract.strip(), summary.strip(), description.strip()]):
+        st.warning('Provide text in at least one section before running the check.')
+    else:
+        result = core.check_document(
+            title=title,
+            abstract=abstract,
+            project_summary=summary,
+            project_description=description,
+        )
+        label_info = core.format_label(result, mode=mode)
+
+        # Headline card
+        css_class = 'cat-3' if result.category == 3 else 'cat-1'
+        st.markdown(f'''
+<div class="{css_class}">
+<strong>{label_info['label']}</strong><br>
+{label_info['description']}
+</div>
+''', unsafe_allow_html=True)
+
+        if result.flagged_stage:
+            st.caption(f'First flagged stage: **{core.STAGE_LABELS[result.flagged_stage]}**. '
+                       f'Per the leaked decision tree, later stages were not scanned.')
+
+        # Stage-by-stage breakdown
+        st.subheader('Stage breakdown')
+        for stage in result.stages:
+            css = 'stage-card stage-skipped' if not stage.scanned else 'stage-card'
+            with st.container():
+                st.markdown(f'<div class="{css}">', unsafe_allow_html=True)
+                header = f'**{stage.label}**'
+                if not stage.scanned:
+                    st.markdown(header + ' &mdash; *skipped (earlier-stage early-exit)*', unsafe_allow_html=True)
+                elif stage.hits:
+                    st.markdown(header + f' &mdash; **{len(stage.hits)} flagged term(s)**', unsafe_allow_html=True)
+                    pills = ''
+                    for h in stage.hits:
+                        pills += f'<span class="hit-pill">{h.term} × {h.count}<span class="source-tag">[{h.source}]</span></span> '
+                    st.markdown(pills, unsafe_allow_html=True)
+                    with st.expander(f'Context snippets ({stage.label})'):
+                        for h in stage.hits:
+                            st.markdown(f'**{h.term}** ({h.count} match{"es" if h.count != 1 else ""})')
+                            for c in h.contexts:
+                                st.markdown(f'> {c}')
+                else:
+                    st.markdown(header + ' &mdash; clean', unsafe_allow_html=True)
+                st.markdown('</div>', unsafe_allow_html=True)
+
+        if result.category == 1:
+            st.info(
+                'Per the leaked process, Category 1 requires a reviewer comment '
+                'explaining why "no" was chosen. Document your reasoning if you '
+                'are using this tool for self-review before submission.'
+            )

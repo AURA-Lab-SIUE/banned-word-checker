@@ -1,118 +1,133 @@
-# Banned Words Checker for Federal Grants
+# Banned Word Checker for Federal Grants
 
-An easy-to-use web application for researchers to analyze documents for the frequency of specific words and phrases. This tool was developed by the **SIM Lab** at **Southern Illinois University Edwardsville**.
+A research-grade tool that implements the **leaked NSF 3-stage decision tree** for reviewing federal grant text for flagged DEIA and other Executive Order language. Built by the **AURA Lab** (Avatars, Users, Relationships, and Affect) at **Southern Illinois University Edwardsville**.
 
-## About The Project
+Ships as **two frontends sharing one engine**:
 
-This tool allows users to upload a document in `.docx` or `.pdf` format. It then processes the text to identify and count occurrences of words from a predefined "banned words" list. The results are displayed in a clean, sorted table showing each found phrase and its frequency.
+- **Static web tool** (`web/`) — runs entirely in the browser, embeddable on any site. All processing is local; no text leaves your computer.
+- **Streamlit app** (`app.py`) — for internal pipeline use and Streamlit Community Cloud deployment.
 
-The primary goal is to provide a simple, no-cost, browser-based utility for research and writing analysis.
+## What's new in v2
 
-### Built With
+This is a substantial rewrite of the original tool. Changes:
 
-- [Python](https://www.python.org/)
-- [Streamlit](https://streamlit.io/)
-- [Pandas](https://pandas.pydata.org/)
-- [python-docx](https://python-docx.readthedocs.io/en/latest/)
-- [pdfplumber](https://github.com/jsvine/pdfplumber)
+| Area | v1 | v2 |
+|---|---|---|
+| Logic | Flat word-frequency scan of whole document | 3-stage decision tree (Title/Abstract → Project Summary → Project Description) with early-exit |
+| Output | Count table | Category 1 (clean) / Category 3 (flagged), per-stage breakdown, context snippets |
+| Word list | Hardcoded Python set, 290 terms | Canonical `data/banned-words.json` (447 terms) with provenance per term |
+| Frontends | Streamlit only | Streamlit + static HTML/JS (both load same JSON) |
+| Output modes | One | Plain (FLAGGED/CLEAN) and Reviewer (Category 1/3) toggle |
+| Privacy | Server-side parsing | Static-web version parses files entirely in-browser |
 
-## Getting Started
+## The decision tree
 
-Follow these instructions to get a copy of the project up and running on your local machine for development and testing purposes.
-
-### Prerequisites
-
-You must have Python 3.8 or newer installed on your system. You can download it from [python.org](https://www.python.org/downloads/).
-
-### Installation & Local Setup
-
-1. **Clone the repository:**
-    
-    ```
-    git clone https://github.com/SIM-Lab-SIUE/banned-word-checker.git
-    cd banned-word-checker
-    
-    ```
-    
-2. **Create and activate a virtual environment (recommended):**
-    - **Windows:**
-        
-        ```
-        python -m venv .venv
-        .\.venv\Scripts\activate
-        
-        ```
-        
-    - **macOS / Linux:**
-        
-        ```
-        python3 -m venv .venv
-        source .venv/bin/activate
-        
-        ```
-        
-3. **Install the required packages:**
-    
-    ```
-    pip install -r requirements.txt
-    
-    ```
-    
-4. **Run the Streamlit application:**
-    
-    ```
-    streamlit run app.py
-    
-    ```
-    
-    Your default web browser should open a new tab with the running application.
-    
-
-### Project Structure
-
-The repository is structured as follows:
+Faithful to the leaked NSF source:
 
 ```
+Start
+  → Stage 1: TITLE or ABSTRACT contains flagged term?
+      → Yes: Category 3 (Retain flag, DEIA/EO language found). END.
+      → No: continue
+  → Stage 2: PROJECT SUMMARY contains flagged term?
+      → Yes: Category 3. END.
+      → No: continue
+  → Stage 3: PROJECT DESCRIPTION contains flagged term?
+      → Yes: Category 3. END.
+      → No: Category 1 (Clean; reviewer adds comment explaining "no"). END.
+```
+
+Early-exit means a hit in the title produces a shorter report than a hit in the description. This mirrors how a reviewer would actually triage applications.
+
+## Word list
+
+`data/banned-words.json` is the single source of truth, loaded identically by the Python engine and the JS port. Each term carries a `source` tag:
+
+- **`leaked`** — appears in the leaked NSF decision-tree word list
+- **`existing`** — added defensively from a community-compiled list (banned-word-checker v1)
+- **`both`** — appears in both
+
+447 terms total at the time of the v2 release. The leaked NSF subset is the authoritative signal; the existing-only terms over-flag relative to NSF and are kept as defensive checks for the writer.
+
+To update the list, edit `scripts/merge_wordlists.py` and re-run it:
+
+```bash
+python scripts/merge_wordlists.py
+```
+
+## Running the static web tool
+
+The static tool is the recommended deployment for the lab website. It needs no server, no Python, and no uploads — everything runs in the browser via PDF.js and mammoth.js.
+
+**Local preview:**
+```bash
+cd banned-word-checker
+python -m http.server 8000
+# open http://localhost:8000/web/index.html
+```
+
+**Deploy to GitHub Pages or any static host:** push the repo (or just `web/` and `data/`) to a Pages-enabled branch. The page loads `../data/banned-words.json` relative to itself, so keep the folder structure intact.
+
+**Embed on the AURA Lab site:** copy `web/index.html`, `web/checker.js`, `web/styles.css`, `web/aura-mark.svg`, and `data/banned-words.json` to the lab site, preserving the relative path from `index.html` to `../data/banned-words.json`. Or link out to it as a separate page.
+
+The static page adopts the AURA Lab v2 design system: dark canvas (`#0E0E12`), violet primary accent (`#7C3AED`), amber for flag signals (`#F59E0B`), Fraunces + Instrument Sans + JetBrains Mono typography, and the same `card` / `pill` / `link-underline` / `divider` patterns used on the lab site. Tokens live in `web/styles.css` and should stay in sync with `aura-lab-siue.github.io/src/styles/tokens.css` if either side changes.
+
+## Running the Streamlit app
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# or: source .venv/bin/activate  # macOS/Linux
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+The Streamlit app uses the same `core.py` engine as the JS port, so any change to the word list or the decision-tree logic affects both frontends.
+
+### Streamlit Community Cloud deployment
+
+Push to GitHub, point Streamlit at `app.py`, deploy. The `assets/` and `data/` folders need to be committed for the app to find logos and the word list.
+
+## Project structure
+
+```
+banned-word-checker/
+├── core.py                       # Python engine: decision tree + section detection
+├── app.py                        # Streamlit frontend
+├── data/
+│   └── banned-words.json         # Canonical word list (shared by both frontends)
+├── web/
+│   ├── index.html                # Static page
+│   ├── checker.js                # JS port of core.py
+│   └── styles.css                # Page styling
+├── scripts/
+│   └── merge_wordlists.py        # Regenerate banned-words.json from sources
+├── assets/                       # Logos and brand assets
 ├── .streamlit/
-│   └── config.toml      # Theming and color configuration
-├── assets/
-│   ├── simlab-atsiue.png  # Lab logo
-│   └── siue-red-logo.png  # University logo
-├── app.py                 # Main Streamlit application script
-├── requirements.txt       # Python package dependencies
-└── README.md              # This file
-
+│   └── config.toml               # Theme for Streamlit app
+├── requirements.txt
+├── LICENSE
+└── README.md
 ```
 
-## Deployment
+## Privacy
 
-This application is designed to be easily deployed for free using [Streamlit Community Cloud](https://share.streamlit.io/).
+The static web tool processes everything locally. Files dragged into the upload box are parsed in your browser using PDF.js and mammoth.js. No grant text is sent to any server. This matters because federal grant drafts often contain unpublished research plans and PII.
 
-1. Push your project to a public GitHub repository. Ensure all files, including the `.streamlit` and `assets` folders, are committed.
-2. Sign up for Streamlit Community Cloud using your GitHub account.
-3. Click "**New app**" and select the repository you just created.
-4. Ensure the "Main file path" is set to `app.py`.
-5. Click "**Deploy!**"
+The Streamlit app also processes files locally on whichever machine is running it, but if you deploy it to Streamlit Community Cloud, your text passes through Streamlit's servers. For sensitive drafts, prefer the static web tool or run Streamlit locally.
 
-Streamlit will handle the rest, and your application will be live on a public URL.
+## Provenance and intent
 
-## Customization
+The decision tree was reconstructed from a leaked NSF process diagram. The leaked word list was OCR-extracted and cleaned (de-duplicated, run-together lines split, OCR splits like "hate" + "speech" reassembled into "hate speech").
 
-### Modifying the Banned Words List
-
-The list of banned words and phrases is stored as a Python `set` named `BANNED_WORDS` at the top of the `app.py` file. You can directly edit this set to add or remove terms.
-
-### Changing the Theme and Appearance
-
-- **Colors:** The application's color scheme is defined in `.streamlit/config.toml`. You can change the hex codes in this file to match a different branding.
-- **Fonts & Styles:** Custom fonts and other style overrides are handled using CSS injected via a `st.markdown()` call at the top of `app.py`. You can modify this CSS block to change the typography or other visual elements.
+This tool exists so grant writers can self-check their drafts against the same logic federal reviewers appear to use, **before** submission, with enough lead time to revise. Whether you agree or disagree with the underlying policy is separate from whether you need to navigate it. The tool simply makes the process transparent.
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+MIT. See `LICENSE`.
 
 ## Contact
 
-The SIM Lab @ SIUE - [Lab Website](https://sim-lab-siue.github.io)
+AURA Lab @ SIUE — [aura-lab-siue.github.io](https://aura-lab-siue.github.io)
 
-Project Link: `https://github.com/SIM-Lab-SIUE/banned-word-checker`
+Project: [github.com/AURA-Lab-SIUE/banned-word-checker](https://github.com/AURA-Lab-SIUE/banned-word-checker)

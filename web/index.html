@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Banned Word Checker — AURA Lab</title>
+<meta name="description" content="Browser tool that runs federal grant text through the leaked NSF 3-stage decision tree for flagged DEIA/EO language. Built by AURA Lab at SIUE. All processing happens locally in your browser; no text is uploaded.">
+<meta name="theme-color" content="#0E0E12">
+<link rel="canonical" href="https://aura-lab-siue.github.io/banned-word-checker/">
+<link rel="icon" type="image/svg+xml" href="./aura-mark.svg">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="Banned Word Checker — AURA Lab">
+<meta property="og:description" content="Browser tool implementing the leaked NSF 3-stage decision tree for federal grant text. Local-only processing.">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,900&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+
+<link rel="stylesheet" href="./styles.css">
+
+<!-- PDF.js + mammoth.js for in-browser file parsing (no server uploads) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.js"></script>
+<script>
+  if (window.pdfjsLib) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.js';
+  }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.7.2/mammoth.browser.min.js"></script>
+</head>
+<body>
+
+<a href="#main" class="skip-link sr-only">Skip to main content</a>
+
+<header class="topbar" aria-label="Site">
+  <div class="container-page row">
+    <a href="https://aura-lab-siue.github.io" class="brand">
+      <span class="dot" aria-hidden="true"></span>
+      AURA Lab
+    </a>
+    <nav aria-label="Primary">
+      <ul>
+        <li><a class="link-underline" href="https://aura-lab-siue.github.io/research/">Research</a></li>
+        <li><a class="link-underline" href="https://aura-lab-siue.github.io/people/">People</a></li>
+        <li><a class="link-underline" href="https://aura-lab-siue.github.io/publications/">Publications</a></li>
+        <li><a class="link-underline" href="https://aura-lab-siue.github.io/tools/" aria-current="page">Tools</a></li>
+        <li><a class="link-underline" href="https://aura-lab-siue.github.io/news/">News</a></li>
+        <li><a class="link-underline" href="https://aura-lab-siue.github.io/join/">Join</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+
+  <section class="hero container-page">
+    <p class="kicker">Open-source tool · Tools</p>
+    <h1>Banned Word Checker.</h1>
+    <p class="lede">
+      A browser tool that runs federal grant text through the leaked NSF 3-stage
+      decision tree for flagged DEIA and Executive-Order language. Everything
+      runs locally; nothing leaves your machine.
+    </p>
+  </section>
+
+  <section class="container-page">
+    <details class="about">
+      <summary>How the decision tree works</summary>
+      <p>
+        Faithful to the leaked NSF review diagram. The tree is hierarchical with
+        early exit, which means a hit in the title produces a shorter report than
+        a hit in the project description.
+      </p>
+      <ol>
+        <li><strong>Stage 1 — Title or Abstract:</strong> any flagged term here yields <em>Category 3</em> and later stages are not scanned.</li>
+        <li><strong>Stage 2 — Project Summary:</strong> scanned only if Stage 1 was clean.</li>
+        <li><strong>Stage 3 — Project Description:</strong> scanned only if Stages 1 and 2 were clean.</li>
+        <li><strong>All clean:</strong> <em>Category 1</em>, which in the leaked process requires a reviewer comment explaining why no flagged language was found.</li>
+      </ol>
+      <p>
+        The word list merges (1) the leaked NSF source list with (2) a
+        community-compiled defensive list. Each term carries provenance —
+        <code>leaked</code>, <code>existing</code>, or <code>both</code>.
+      </p>
+      <p>
+        <strong>Privacy:</strong> all processing runs in your browser. The text
+        you paste or the file you upload never leaves your computer. PDFs are
+        parsed locally via PDF.js; DOCX via mammoth.js.
+      </p>
+    </details>
+
+    <div class="controls-row">
+      <div id="word-count" class="term-count">Loading word list…</div>
+      <div class="mode-toggle" role="radiogroup" aria-label="Output mode">
+        <span class="label">Output</span>
+        <button type="button" class="pill mode-btn" data-mode="plain" aria-pressed="true">Plain</button>
+        <button type="button" class="pill mode-btn" data-mode="reviewer" aria-pressed="false">Reviewer</button>
+      </div>
+    </div>
+
+    <div class="tabs" role="tablist" aria-label="Input mode">
+      <button class="tab-btn active" role="tab" data-tab="paste" aria-selected="true">Paste sections</button>
+      <button class="tab-btn" role="tab" data-tab="upload" aria-selected="false">Upload file</button>
+    </div>
+
+    <div id="tab-paste" class="tab-panel active" role="tabpanel">
+      <div class="section-grid">
+        <div>
+          <label for="title">Title</label>
+          <textarea id="title" placeholder="Project title"></textarea>
+        </div>
+        <div>
+          <label for="abstract">Abstract</label>
+          <textarea id="abstract" placeholder="Abstract"></textarea>
+        </div>
+        <div>
+          <label for="project_summary">Project Summary</label>
+          <textarea id="project_summary" placeholder="Project Summary (typically 1 page)"></textarea>
+        </div>
+        <div>
+          <label for="project_description">Project Description</label>
+          <textarea id="project_description" placeholder="Project Description (typically 15 pages)"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-upload" class="tab-panel" role="tabpanel">
+      <div class="upload-area">
+        <p><strong>Upload a .docx or .pdf grant document</strong></p>
+        <p class="status">The tool attempts to split it by standard NSF section headers. You can edit any section in the paste view before running the check.</p>
+        <input type="file" id="file-input" accept=".pdf,.docx">
+        <p id="upload-status" class="status"></p>
+      </div>
+    </div>
+
+    <button id="run-check" class="btn-run">Run Check</button>
+
+    <div id="results" aria-live="polite"></div>
+  </section>
+
+  <header class="divider container-page">
+    <p class="kicker">Open source · MIT</p>
+    <h2 class="title">Inspect, fork, contribute.</h2>
+  </header>
+
+  <section class="container-page" style="margin-bottom: 4rem;">
+    <div class="section-grid">
+      <article class="card is-static">
+        <header style="display:flex; align-items:baseline; justify-content:space-between; gap:1rem;">
+          <h3 class="font-display" style="font-family: var(--font-display); font-size: 1.5rem; font-weight: 900;">
+            <a class="link-underline" href="https://github.com/AURA-Lab-SIUE/banned-word-checker" target="_blank" rel="noopener">Repository</a>
+          </h3>
+          <span class="term-count">Python · JS · MIT</span>
+        </header>
+        <p style="margin-top: 0.75rem; color: var(--muted);">
+          Core engine in Python, mirrored in JavaScript. Same word-list JSON drives both.
+          Streamlit app for internal pipeline use; this static page for embed anywhere.
+        </p>
+        <p style="margin-top: 1rem; font-size: 0.9rem;">
+          <a class="link-underline text-violet" href="https://github.com/AURA-Lab-SIUE/banned-word-checker" target="_blank" rel="noopener">View on GitHub ↗</a>
+        </p>
+      </article>
+      <article class="card is-static">
+        <header style="display:flex; align-items:baseline; justify-content:space-between; gap:1rem;">
+          <h3 class="font-display" style="font-family: var(--font-display); font-size: 1.5rem; font-weight: 900;">Provenance</h3>
+          <span class="term-count">v2.0.0</span>
+        </header>
+        <p style="margin-top: 0.75rem; color: var(--muted);">
+          Decision tree reconstructed from a leaked NSF process diagram. Word list
+          merged from the leaked source and a community-compiled defensive list,
+          each term tagged with where it came from.
+        </p>
+        <p style="margin-top: 1rem; font-size: 0.9rem;">
+          <a class="link-underline text-violet" href="https://github.com/AURA-Lab-SIUE/banned-word-checker#provenance-and-intent" target="_blank" rel="noopener">Read the rationale ↗</a>
+        </p>
+      </article>
+    </div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <div class="container-page row">
+    <div>AURA Lab · Southern Illinois University Edwardsville · &copy; 2026</div>
+    <div class="links">
+      <a class="link-underline" href="https://aura-lab-siue.github.io">aura-lab-siue.github.io</a>
+      <a class="link-underline" href="https://github.com/AURA-Lab-SIUE/banned-word-checker">GitHub</a>
+      <a class="link-underline" href="mailto:aleith@siue.edu">aleith@siue.edu</a>
+    </div>
+  </div>
+</footer>
+
+<script type="module">
+import { loadWordlist, checkDocument, formatLabel, splitSections, extractDocxText, extractPdfText } from './checker.js';
+
+// --- Tabs ---
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.classList.remove('active');
+      b.setAttribute('aria-selected', 'false');
+    });
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+// --- Mode toggle (pill group) ---
+let currentMode = 'plain';
+document.querySelectorAll('.mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-btn').forEach(b => b.setAttribute('aria-pressed', 'false'));
+    btn.setAttribute('aria-pressed', 'true');
+    currentMode = btn.dataset.mode;
+  });
+});
+
+// --- Word list metadata ---
+(async () => {
+  try {
+    const data = await loadWordlist();
+    const leakedN = data.terms.filter(t => t.source === 'leaked' || t.source === 'both').length;
+    document.getElementById('word-count').textContent =
+      `${data.terms.length} terms · ${leakedN} from leaked NSF source`;
+  } catch (e) {
+    document.getElementById('word-count').textContent = 'Failed to load word list: ' + e.message;
+  }
+})();
+
+// --- File upload ---
+const fileInput = document.getElementById('file-input');
+const uploadStatus = document.getElementById('upload-status');
+
+fileInput.addEventListener('change', async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
+  uploadStatus.textContent = `Parsing ${file.name}…`;
+  try {
+    let rawText = '';
+    if (file.name.toLowerCase().endsWith('.pdf')) {
+      rawText = await extractPdfText(file);
+    } else if (file.name.toLowerCase().endsWith('.docx')) {
+      rawText = await extractDocxText(file);
+    } else {
+      uploadStatus.textContent = 'Unsupported file type. Use .pdf or .docx.';
+      return;
+    }
+    const sections = splitSections(rawText);
+    document.getElementById('title').value = sections.title;
+    document.getElementById('abstract').value = sections.abstract;
+    document.getElementById('project_summary').value = sections.project_summary;
+    document.getElementById('project_description').value = sections.project_description;
+
+    document.querySelector('.tab-btn[data-tab="paste"]').click();
+    uploadStatus.textContent = `Auto-detected sections from ${file.name}. Review them in the Paste Sections tab and edit if needed before running the check.`;
+  } catch (e) {
+    uploadStatus.textContent = 'Error parsing file: ' + e.message;
+  }
+});
+
+// --- Render results ---
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[c]);
+}
+
+function renderResults(result, mode) {
+  const labelInfo = formatLabel(result, mode);
+  const container = document.getElementById('results');
+  const stageHtml = result.stages.map(s => {
+    if (!s.scanned) {
+      return `<article class="stage-card skipped">
+        <h3>${s.label}</h3>
+        <p class="stage-status">Skipped &mdash; earlier-stage early-exit</p>
+      </article>`;
+    }
+    if (s.hits.length === 0) {
+      return `<article class="stage-card">
+        <h3>${s.label}</h3>
+        <p class="stage-status">Clean &mdash; no flagged terms found</p>
+      </article>`;
+    }
+    const pills = s.hits.map(h =>
+      `<span class="hit-pill">${escapeHtml(h.term)} × ${h.count}<span class="source">[${h.source}]</span></span>`
+    ).join('');
+    const contexts = s.hits.map(h =>
+      `<p><strong>${escapeHtml(h.term)}</strong> (${h.count} match${h.count !== 1 ? 'es' : ''})</p>` +
+      h.contexts.map(c => `<blockquote>${escapeHtml(c)}</blockquote>`).join('')
+    ).join('');
+    return `<article class="stage-card">
+      <h3>${s.label}</h3>
+      <p class="stage-status">${s.hits.length} flagged term${s.hits.length !== 1 ? 's' : ''}</p>
+      <div class="hit-pills">${pills}</div>
+      <details class="contexts">
+        <summary>Show context snippets</summary>
+        ${contexts}
+      </details>
+    </article>`;
+  }).join('');
+
+  const headlineClass = result.category === 3 ? 'cat-3' : 'cat-1';
+  const stageNote = result.flaggedStage
+    ? `<p class="stage-meta">First flagged stage: <strong>${result.stages.find(s => s.stage === result.flaggedStage).label}</strong>. Later stages were not scanned, per the leaked decision tree.</p>`
+    : '';
+
+  const reviewerNotice = result.category === 1
+    ? `<div class="notice"><strong>Category 1 note —</strong> the leaked process requires a reviewer comment explaining why "no" was chosen. Document your reasoning if you are using this tool for self-review before submission.</div>`
+    : '';
+
+  container.innerHTML = `
+    <div class="headline ${headlineClass}">
+      <strong>${labelInfo.label}</strong>
+      <p>${labelInfo.description}</p>
+    </div>
+    ${stageNote}
+    <h2 style="font-size: clamp(24px, 3vw, 36px); margin: 1.5rem 0 0.75rem;">Stage breakdown</h2>
+    ${stageHtml}
+    ${reviewerNotice}
+  `;
+  container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// --- Run check ---
+document.getElementById('run-check').addEventListener('click', async () => {
+  const title = document.getElementById('title').value;
+  const abstract = document.getElementById('abstract').value;
+  const projectSummary = document.getElementById('project_summary').value;
+  const projectDescription = document.getElementById('project_description').value;
+
+  if (![title, abstract, projectSummary, projectDescription].some(t => t.trim())) {
+    document.getElementById('results').innerHTML =
+      `<div class="notice"><strong>Heads up —</strong> provide text in at least one section before running the check.</div>`;
+    return;
+  }
+  const btn = document.getElementById('run-check');
+  btn.disabled = true;
+  btn.textContent = 'Running…';
+  try {
+    const result = await checkDocument({ title, abstract, projectSummary, projectDescription });
+    renderResults(result, currentMode);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Check';
+  }
+});
+</script>
+
+</body>
+</html>
