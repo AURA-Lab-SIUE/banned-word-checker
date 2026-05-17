@@ -1,0 +1,53 @@
+name: Deploy static site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'data/**'
+      - '.github/workflows/deploy-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stage static site
+        run: |
+          mkdir -p _site
+          cp -r web/* _site/
+          mkdir -p _site/data
+          cp data/banned-words.json _site/data/
+          # checker.js fetches ../data/banned-words.json relative to web/.
+          # After staging, index.html sits at _site/ root, so rewrite the relative path.
+          sed -i "s|'\.\./data/banned-words\.json'|'./data/banned-words.json'|g" _site/checker.js
+          ls -la _site/
+          ls -la _site/data/
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
